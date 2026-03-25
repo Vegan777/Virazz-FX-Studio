@@ -1,0 +1,5 @@
+{
+  "name": "Virazz FX Studio",
+  "description": "A minimalist photography and FX studio app with Material Design, featuring categories, subcategories, and a full-screen photo viewer with swiping and likes.",
+  "requestFramePermissions": []
+}

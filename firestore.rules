@@ -1,0 +1,114 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: categories
+    // Fields:
+    //   - name: string (required)
+    //   - icon: string (required)
+    //   - subcategories: list (optional)
+    //
+    // Collection: photos
+    // Fields:
+    //   - url: string (required)
+    //   - title: string (required)
+    //   - categoryId: string (required)
+    //   - subcategory: string (optional)
+    //   - likes: number (required)
+    //   - author: string (optional)
+    //
+    // Collection: likes
+    // Document ID: userId_photoId
+    // Fields:
+    //   - userId: string (required)
+    //   - photoId: string (required)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+          (exists(/databases/$(database)/documents/promoted_admins/$(request.auth.token.email))) ||
+          (request.auth.token.email == "khotusoni@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isMasterAdmin() {
+      return isAuthenticated() && request.auth.token.email == "khotusoni@gmail.com" && request.auth.token.email_verified == true;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Domain Validators
+    function isValidCategory(data) {
+      return hasRequiredFields(['name', 'icon']) &&
+        data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+        data.icon is string && data.icon.size() > 0 && data.icon.size() < 50 &&
+        (!('thumbnail' in data) || (data.thumbnail is string && data.thumbnail.size() < 2000)) &&
+        (!('subcategories' in data) || data.subcategories is list);
+    }
+
+    function isValidPhoto(data) {
+      return hasRequiredFields(['url', 'title', 'categoryId', 'likes']) &&
+        data.url is string && data.url.matches("^https?://.*") && data.url.size() < 2000 &&
+        data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+        data.categoryId is string &&
+        data.likes is int && data.likes >= 0;
+    }
+
+    function isValidLike(data) {
+      return hasRequiredFields(['userId', 'photoId']) &&
+        data.userId == request.auth.uid &&
+        data.photoId is string;
+    }
+
+    // Rules
+    match /categories/{categoryId} {
+      allow read: if true; // Publicly readable
+      allow write: if isAdmin();
+    }
+
+    match /photos/{photoId} {
+      allow read: if true; // Publicly readable
+      allow create: if isAdmin() && isValidPhoto(request.resource.data);
+      allow update: if (isAdmin() && isValidPhoto(request.resource.data)) || 
+                      (isAuthenticated() && 
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']) &&
+                       math.abs(request.resource.data.likes - resource.data.likes) == 1);
+      allow delete: if isAdmin();
+    }
+
+    match /likes/{likeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidLike(request.resource.data) && likeId == request.auth.uid + "_" + request.resource.data.photoId;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) || isAdmin();
+    }
+
+    match /promoted_admins/{email} {
+      allow read: if isAuthenticated();
+      allow write: if isMasterAdmin();
+    }
+  }
+}
